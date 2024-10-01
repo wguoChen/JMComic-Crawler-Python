@@ -1,6 +1,16 @@
+from functools import lru_cache
+
 from common import *
 
 from .jm_config import *
+
+
+class Downloadable:
+
+    def __init__(self):
+        self.save_path: str = ''
+        self.exists: bool = False
+        self.skip = False
 
 
 class JmBaseEntity:
@@ -91,17 +101,17 @@ class DetailEntity(JmBaseEntity, IndexedEntity):
         """
         authoroname = author + oname
 
-        比较好识别的一种本子名称方式
+        个人认为识别度比较高的本子名称，一眼看去就能获取到本子的关键信息
 
-        具体格式: f'【author】{oname}'
+        具体格式: '【author】oname'
 
         示例:
 
-        原本子名：喂我吃吧 老師! [欶瀾漢化組] [BLVEFO9] たべさせて、せんせい! (ブルーアーカイブ) [中國翻譯] [無修正]
+        Pname：喂我吃吧 老師! [欶瀾漢化組] [BLVEFO9] たべさせて、せんせい! (ブルーアーカイブ) [中國翻譯] [無修正]
 
-        authoroname：【BLVEFO9】喂我吃吧 老師!
+        Pauthoroname：【BLVEFO9】喂我吃吧 老師!
 
-        :return: 返回作者名+作品原名，格式为: '【author】{oname}'
+        :return: 返回作者名+本子原始名称，格式为: '【author】oname'
         """
         return f'【{self.author}】{self.oname}'
 
@@ -109,12 +119,16 @@ class DetailEntity(JmBaseEntity, IndexedEntity):
     def idoname(self):
         """
         类似 authoroname
-        :return: '[id] {oname}'
+        
+        :return: '[id] oname'
         """
         return f'[{self.id}] {self.oname}'
 
     def __str__(self):
-        return f'{self.__class__.__name__}({self.id}-{self.title})'
+        return f'{self.__class__.__name__}' \
+               '{' \
+               f'{self.id}: {self.title}' \
+               '}'
 
     @classmethod
     def __alias__(cls):
@@ -152,7 +166,7 @@ class DetailEntity(JmBaseEntity, IndexedEntity):
         return getattr(detail, ref)
 
 
-class JmImageDetail(JmBaseEntity):
+class JmImageDetail(JmBaseEntity, Downloadable):
 
     def __init__(self,
                  aid,
@@ -163,7 +177,8 @@ class JmImageDetail(JmBaseEntity):
                  from_photo=None,
                  query_params=None,
                  index=-1,
-                 ) -> None:
+                 ):
+        super().__init__()
         if scramble_id is None or (isinstance(scramble_id, str) and scramble_id == ''):
             from .jm_toolkit import ExceptionTool
             ExceptionTool.raises(f'图片的scramble_id不能为空')
@@ -178,13 +193,13 @@ class JmImageDetail(JmBaseEntity):
         self.query_params: Optional[str] = query_params
         self.index = index  # 从1开始
 
-        # temp fields, in order to simplify passing parameter
-        self.save_path: str = ''
-        self.is_exists: bool = False
-
     @property
     def filename_without_suffix(self):
         return self.img_file_name
+
+    @property
+    def filename(self):
+        return self.img_file_name + self.img_file_suffix
 
     @property
     def is_gif(self):
@@ -244,7 +259,7 @@ class JmImageDetail(JmBaseEntity):
         return True
 
 
-class JmPhotoDetail(DetailEntity):
+class JmPhotoDetail(DetailEntity, Downloadable):
 
     def __init__(self,
                  photo_id,
@@ -259,6 +274,7 @@ class JmPhotoDetail(DetailEntity):
                  author=None,
                  from_album=None,
                  ):
+        super().__init__()
         self.photo_id: str = str(photo_id)
         self.scramble_id: str = str(scramble_id)
         self.name: str = str(name).strip()
@@ -289,7 +305,8 @@ class JmPhotoDetail(DetailEntity):
         # 2. 值目前在网页端只在photo页面的图片标签的data-original属性出现
         # 这里的模拟思路是，获取到第一个图片标签的data-original，
         # 取出其query参数 → self.data_original_query_params, 该值未来会传递给 JmImageDetail
-        self.data_original_query_params = self.get_data_original_query_params(data_original_0)
+        # self.data_original_query_params = self.get_data_original_query_params(data_original_0)
+        self.data_original_query_params = None
 
     @property
     def is_single_album(self) -> bool:
@@ -339,7 +356,7 @@ class JmPhotoDetail(DetailEntity):
             return self._author.strip()
 
         # 使用默认
-        return JmMagicConstants.DEFAULT_AUTHOR
+        return JmModuleConfig.DEFAULT_AUTHOR
 
     def create_image_detail(self, index) -> JmImageDetail:
         # 校验参数
@@ -386,6 +403,7 @@ class JmPhotoDetail(DetailEntity):
     def id(self):
         return self.photo_id
 
+    @lru_cache(None)
     def getindex(self, index) -> JmImageDetail:
         return self.create_image_detail(index)
 
@@ -403,7 +421,7 @@ class JmPhotoDetail(DetailEntity):
         return True
 
 
-class JmAlbumDetail(DetailEntity):
+class JmAlbumDetail(DetailEntity, Downloadable):
 
     def __init__(self,
                  album_id,
@@ -422,6 +440,7 @@ class JmAlbumDetail(DetailEntity):
                  tags,
                  related_list=None,
                  ):
+        super().__init__()
         self.album_id: str = str(album_id)
         self.scramble_id: str = str(scramble_id)
         self.name: str = name
@@ -457,7 +476,7 @@ class JmAlbumDetail(DetailEntity):
         if len(self.authors) >= 1:
             return self.authors[0]
 
-        return JmMagicConstants.DEFAULT_AUTHOR
+        return JmModuleConfig.DEFAULT_AUTHOR
 
     @property
     def id(self):
@@ -478,7 +497,7 @@ class JmAlbumDetail(DetailEntity):
 
         return ret
 
-    def create_photo_detail(self, index) -> Tuple[JmPhotoDetail, Tuple]:
+    def create_photo_detail(self, index) -> JmPhotoDetail:
         # 校验参数
         length = len(self.episode_list)
 
@@ -497,10 +516,11 @@ class JmAlbumDetail(DetailEntity):
             from_album=self,
         )
 
-        return photo, (self.episode_list[index])
+        return photo
 
+    @lru_cache(None)
     def getindex(self, item) -> JmPhotoDetail:
-        return self.create_photo_detail(item)[0]
+        return self.create_photo_detail(item)
 
     def __getitem__(self, item) -> Union[JmPhotoDetail, List[JmPhotoDetail]]:
         return super().__getitem__(item)
@@ -593,7 +613,7 @@ class JmSearchPage(JmPageContent):
 
     @property
     def page_size(self) -> int:
-        return JmMagicConstants.PAGE_SIZE_SEARCH
+        return JmModuleConfig.PAGE_SIZE_SEARCH
 
     # 下面的方法是对单个album的包装
 
@@ -634,7 +654,7 @@ class JmFavoritePage(JmPageContent):
 
     @property
     def page_size(self) -> int:
-        return JmMagicConstants.PAGE_SIZE_FAVORITE
+        return JmModuleConfig.PAGE_SIZE_FAVORITE
 
     def iter_folder_id_name(self) -> Generator[Tuple[str, str], None, None]:
         """
